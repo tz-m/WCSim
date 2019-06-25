@@ -34,8 +34,8 @@ inline vector<string> readInLine(fstream& inFile, int lineSize, char* inBuf)
   return tokenize(" $\r", inBuf);
 }
 
-inline float atof( const string& s ) {return std::atof( s.c_str() );}
-inline int   atoi( const string& s ) {return std::atoi( s.c_str() );}
+inline float atof( const string& str ) {return std::atof( str.c_str() );}
+inline int   atoi( const string& str ) {return std::atoi( str.c_str() );}
 
 WCSimPrimaryGeneratorAction::WCSimPrimaryGeneratorAction(
 					  WCSimDetectorConstruction* myDC)
@@ -63,7 +63,7 @@ WCSimPrimaryGeneratorAction::WCSimPrimaryGeneratorAction(
   particleGun->SetParticleMomentumDirection(G4ThreeVector(0.,0.,1.0));
 
   G4ParticleTable* particleTable = G4ParticleTable::GetParticleTable();
-  G4IonTable* ionTable = G4IonTable::GetIonTable();
+  //G4IonTable* ionTable = G4IonTable::GetIonTable();
   G4String particleName;
   particleGun->
     SetParticleDefinition(particleTable->FindParticle(particleName="mu+"));
@@ -76,6 +76,17 @@ WCSimPrimaryGeneratorAction::WCSimPrimaryGeneratorAction(
   useGunEvt    = false;
   useLaserEvt  = false;
   useGPSEvt    = false;
+  useArbDistEvt = false;
+
+  arbDistFileName = "";
+  arbDistTimeSmearSigma = 0.0;
+  arbDistWavelengthSmearSigma = 0.0;
+  arbDistTranslate = G4ThreeVector(0.,0.,0.);
+  arbDistRotationAxis = G4ThreeVector(0.,0.,0.);
+  arbDistRotationAngle = 0.0;
+  arbDistFileRead = false;
+  arbDistNumPhotons = 100.0;
+  arbDistNumPhotonsSigma = 10.0;
 }
 
 WCSimPrimaryGeneratorAction::~WCSimPrimaryGeneratorAction()
@@ -195,7 +206,7 @@ void WCSimPrimaryGeneratorAction::GeneratePrimaries(G4Event* anEvent)
 		if ( token[6] == "0")
 		  {
 		    G4int pdgid = atoi(token[1]);
-		    G4double energy = atof(token[2])*MeV;
+		    G4double en = atof(token[2])*MeV;
 		    G4ThreeVector dir = G4ThreeVector(atof(token[3]),
 						      atof(token[4]),
 						      atof(token[5]));
@@ -234,7 +245,7 @@ void WCSimPrimaryGeneratorAction::GeneratePrimaries(G4Event* anEvent)
 		    G4double mass = 
 		      particleGun->GetParticleDefinition()->GetPDGMass();
 
-		    G4double ekin = energy - mass;
+		    G4double ekin = en - mass;
 
 		    particleGun->SetParticleEnergy(ekin);
 		    //G4cout << "Particle: " << pdgid << " KE: " << ekin << G4endl;
@@ -276,7 +287,7 @@ void WCSimPrimaryGeneratorAction::GeneratePrimaries(G4Event* anEvent)
 
     G4ThreeVector P  =anEvent->GetPrimaryVertex()->GetPrimary()->GetMomentum();
     G4ThreeVector vtx=anEvent->GetPrimaryVertex()->GetPosition();
-    G4double m       =anEvent->GetPrimaryVertex()->GetPrimary()->GetMass();
+    G4double mass       =anEvent->GetPrimaryVertex()->GetPrimary()->GetMass();
     G4int pdg        =anEvent->GetPrimaryVertex()->GetPrimary()->GetPDGcode();
 
     char strPDG[11];
@@ -307,7 +318,7 @@ void WCSimPrimaryGeneratorAction::GeneratePrimaries(G4Event* anEvent)
     
     
     G4ThreeVector dir  = P.unit();
-    G4double E         = std::sqrt((P.dot(P))+(m*m));
+    G4double E         = std::sqrt((P.dot(P))+(mass*mass));
 
 //     particleGun->SetParticleEnergy(E);
 //     particleGun->SetParticlePosition(vtx);
@@ -342,17 +353,204 @@ void WCSimPrimaryGeneratorAction::GeneratePrimaries(G4Event* anEvent)
       
       G4ThreeVector P   =anEvent->GetPrimaryVertex()->GetPrimary()->GetMomentum();
       G4ThreeVector vtx =anEvent->GetPrimaryVertex()->GetPosition();
-      G4double m        =anEvent->GetPrimaryVertex()->GetPrimary()->GetMass();
+      G4double mass        =anEvent->GetPrimaryVertex()->GetPrimary()->GetMass();
       G4int pdg         =anEvent->GetPrimaryVertex()->GetPrimary()->GetPDGcode();
       
       G4ThreeVector dir  = P.unit();
-      G4double E         = std::sqrt((P.dot(P))+(m*m));
+      G4double E         = std::sqrt((P.dot(P))+(mass*mass));
       
       SetVtx(vtx);
       SetBeamEnergy(E);
       SetBeamDir(dir);
       SetBeamPDG(pdg);
     }
+  else if (useArbDistEvt)
+    {
+      // Use arbitrary (normalised cumulative) probability distribution to define particle
+      // release parameters. The input file will be a ROOT TTree (called "source") with branches for:
+      //    -- "index/i"  ,  for bookkeeping purposes
+      //    -- "status/I" ,  nuance-style status code
+      //    -- "pdg/I"    ,  PDG code of particle to release
+      //    -- "xpos/D"   ,  x position of release vertex (cm)
+      //    -- "ypos/D"   ,  y position of release vertex (cm)
+      //    -- "zpos/D"   ,  z position of release vertex (cm)
+      //    -- "xdir/D"   ,  x direction cosine (unitless)
+      //    -- "ydir/D"   ,  y direction cosine (unitless)
+      //    -- "zdir/D"   ,  z direction cosine (unitless)
+      //    -- "time/D"   ,  release time (ns)
+      //    -- "energy/D" ,  particle total energy (MeV)
+      //    -- "ncdf/D"   ,  normalised cumulative probability (unitless)
+      //    -- "polang/D" ,  polarisation angle (rad), see Geant4 Physics Reference Manual in section for Optical Photons
+      // Each entry in the tree corresponds to one "bin" of the cumulative probability distribution.
+      // The process for event generation will go like this:
+      //    1. Generate random number, r, on [0,1],
+      //    2. Step through normalised cumulative probability distribution bins, i,  searching
+      //       for the bin which corresponds to ncdf_i <= r < ncdf_(i+1),
+      //    3. Generate particle based on properties in the tree entry which corresponds to
+      //       the bin which was found in step 2.
+      //
+      // Get options from PrimaryGeneratorMessenger:
+      //   -- choose ArbDist generator
+      //   -- specify filename containing "source" tree with above branches
+      //   -- gaussian smear time by sigma(ns) (optional)
+      //   -- gaussian smear wavelength by sigma(nm) (optional, if using optical photons)
+      //   -- vertex translation x,y,z(cm)
+      //   -- direction rotation
+      //           --> Rotate the vector (xdir,ydir,zdir) by theta(deg) around the vector (l,m,n).
+      //           --> Direction is counterclockwise when looking at the origin from (l,m,n).
+      //           --> See https://en.wikipedia.org/wiki/Transformation_matrix#Rotation_2
+
+      std::cout << "Read parameters:" << std::endl;
+      std::cout << "  arbDistFileName=" << arbDistFileName << std::endl;
+      std::cout << "  arbDistTimeSmearSigma=" << arbDistTimeSmearSigma/ns << " ns,   arbDistWavelengthSmearSigma=" << arbDistWavelengthSmearSigma/nm << " nm" << std::endl;
+      std::cout << "  arbDistTranslate=(" << arbDistTranslate.x()/cm << "," << arbDistTranslate.y()/cm << "," << arbDistTranslate.z()/cm << ") cm" << std::endl;
+      std::cout << "  arbDistRotationAxis=(" << arbDistRotationAxis.x() << "," << arbDistRotationAxis.y() << "," << arbDistRotationAxis.z() << ")  arbDistRotationAngle=" << arbDistRotationAngle/deg << " deg" << std::endl;
+      std::cout << "  arbDistNumPhotonsMean=" << arbDistNumPhotons << "  arbDistNumPhotonsSigma=" << arbDistNumPhotonsSigma << std::endl;
+      
+      if (!arbDistFileRead)
+	{
+	  ad_file = new ArbDistFile(arbDistFileName);
+	  arbDistFileRead = true;
+	}
+      if (ad_file->IsValid())
+	{
+	  G4double numPhots = G4RandGauss::shoot(arbDistNumPhotons,arbDistNumPhotonsSigma);
+	  G4int numPhots_Int = std::max(int(0),int(std::round(numPhots)));
+
+	  std::cout << "Firing " << numPhots_Int << " photons." << std::endl;
+	  
+	  for (G4int i_phot = 0; i_phot < numPhots_Int; ++i_phot)
+	    {
+	      G4double rand_num = G4UniformRand();
+	      ArbDistFile::Data ad_data;
+	      G4bool ret = ad_file->SampleDistribution(rand_num,ad_data);
+	      if (ret)
+		{
+		  // do generation here
+		  //std::cout << "Particle to create using random number " << rand_num << ":" << std::endl;
+		  //std::cout << "  index=" << ad_data.index << "  status=" << ad_data.status << "  pdg=" << ad_data.pdg << std::endl;
+		  //std::cout << "  x,y,z=(" << ad_data.xpos << "," << ad_data.ypos << "," << ad_data.zpos << ") cm,   xd,yd,zd=(" << ad_data.xdir << "," << ad_data.ydir << "," << ad_data.zdir << ")" << std::endl;
+		  //std::cout << "  time=" << ad_data.time << " ns,  energy=" << ad_data.energy << " MeV,  ncdf=" << ad_data.ncdf << std::endl;
+		  
+		  G4double t_smear = G4RandGauss::shoot(0,arbDistTimeSmearSigma/ns);
+		  G4double l_smear = G4RandGauss::shoot(0,arbDistWavelengthSmearSigma/nm);
+		  
+		  const G4double hc = 1.239842075191944e-3;// nm*MeV
+		  G4double en_smear = hc/l_smear;
+		  
+		  G4double shoot_time = ad_data.time+t_smear;// ns
+		  G4double shoot_energy = hc/((hc/ad_data.energy)+l_smear);// MeV
+		  
+		  //std::cout << "Smeared particle: " << std::endl;
+		  //std::cout << "  time=" << ad_data.time << "+" << t_smear << "=" << ad_data.time+t_smear << " ns,  energy=" << ad_data.energy << "+" << en_smear << "=" << hc/((hc/ad_data.energy)+l_smear) << " MeV,  wavelength=" << hc/ad_data.energy << "+" << l_smear << "=" << (hc/ad_data.energy)+l_smear << " nm" << std::endl;
+		  
+		  G4ThreeVector dirvec(ad_data.xdir,ad_data.ydir,ad_data.zdir);
+		  G4ThreeVector origdirvec = dirvec;
+		  G4ThreeVector rotaxis(arbDistRotationAxis.x(),arbDistRotationAxis.y(),arbDistRotationAxis.z());
+		  G4double rotangle = arbDistRotationAngle/rad;
+		  G4ThreeVector newdir = dirvec.rotate(rotangle,rotaxis);
+		  
+		  //std::cout << "Rotate axes: " << std::endl;
+		  //std::cout << "  old direction=(" << origdirvec.x() << "," << origdirvec.y() << "," << origdirvec.z() << ")  new direction=(" << newdir.x() << "," << newdir.y() << "," << newdir.z() << ")" << std::endl;
+		  
+		  G4ThreeVector oldvertex(ad_data.xpos,ad_data.ypos,ad_data.zpos);
+		  G4ThreeVector newvertex = oldvertex + arbDistTranslate;
+		  
+		  //std::cout << "Translate vertex: " << std::endl;
+		  //std::cout << "  old vertex=(" << oldvertex.x() << "," << oldvertex.y() << "," << oldvertex.z() << ")  new vertex=(" << newvertex.x() << "," << newvertex.y() << "," << newvertex.z() << ")" << std::endl;
+		  
+		  particleGun->SetParticleTime(shoot_time);
+		  if (ad_data.pdg == 30)
+		    particleGun->SetParticleDefinition(particleTable->FindParticle("opticalphoton"));
+		  else
+		    particleGun->SetParticleDefinition(particleTable->FindParticle(ad_data.pdg));
+		  G4double mass = particleGun->GetParticleDefinition()->GetPDGMass();
+		  G4double ekin = shoot_energy - mass;
+		  
+		  particleGun->SetParticleEnergy(ekin);
+		  particleGun->SetParticleMomentumDirection(newdir);
+		  particleGun->SetParticlePosition(newvertex);
+		  
+		  if (ad_data.pdg == 30)
+		    {
+		      // I don't pretend to know exactly how this snippet works. It's part of the "standard" code for creating linear polarization based on an angle.
+		      G4ThreeVector normal (1., 0., 0.);
+		      G4ThreeVector kphoton = particleGun->GetParticleMomentumDirection();
+		      G4ThreeVector product = normal.cross(kphoton);
+		      G4double modul2       = product*product;
+		      
+		      G4ThreeVector e_perpend (0., 0., 1.);
+		      if (modul2 > 0.) e_perpend = (1./std::sqrt(modul2))*product;
+		      G4ThreeVector e_paralle    = e_perpend.cross(kphoton);
+		      
+		      G4ThreeVector polar = std::cos(ad_data.polang)*e_paralle + std::sin(ad_data.polang)*e_perpend;
+		      particleGun->SetParticlePolarization(polar);
+		      //std::cout << "Polarization angle: " << ad_data.polang << " rad (" << ad_data.polang*180.0/M_PI << " deg)" << std::endl;
+		      //std::cout << "    Polarization vector: " << polar << std::endl;
+		    }
+     
+		  particleGun->GeneratePrimaryVertex(anEvent);	  
+		}
+	    }
+	} 
+    }
+}
+
+ArbDistFile::ArbDistFile(G4String fname)
+  : isValid(false)
+{
+  TFile * file = new TFile(fname.c_str(),"READ");
+  isValid = file->IsOpen();
+  if (isValid)
+    {
+      std::cout << "Open File Fresh" << std::endl;
+      TTreeReader reader("source",file);
+      TTreeReaderValue<unsigned int> r_index(reader,"index");
+      TTreeReaderValue<int> r_status(reader,"status");
+      TTreeReaderValue<int> r_pdg(reader,"pdg");
+      TTreeReaderValue<double> r_xpos(reader,"xpos");
+      TTreeReaderValue<double> r_ypos(reader,"ypos");
+      TTreeReaderValue<double> r_zpos(reader,"zpos");
+      TTreeReaderValue<double> r_xdir(reader,"xdir");
+      TTreeReaderValue<double> r_ydir(reader,"ydir");
+      TTreeReaderValue<double> r_zdir(reader,"zdir");
+      TTreeReaderValue<double> r_time(reader,"time");
+      TTreeReaderValue<double> r_energy(reader,"energy");
+      TTreeReaderValue<double> r_ncdf(reader,"ncdf");
+      TTreeReaderValue<double> r_polang(reader,"polang");
+      while (reader.Next())
+	{
+	  Data d;
+	  d.index = *r_index; d.status = *r_status; d.pdg = *r_pdg;
+	  d.xpos = *r_xpos; d.ypos = *r_ypos; d.zpos = *r_zpos;
+	  d.xdir = *r_xdir; d.ydir = *r_ydir; d.zdir = *r_zdir;
+	  d.time = *r_time; d.energy = *r_energy; d.ncdf = *r_ncdf;
+	  d.polang = *r_polang;
+	  dvec.push_back(d);
+	}
+      std::sort(dvec.begin(),dvec.end(),[](const Data &d1, const Data &d2) {return d1.ncdf<d2.ncdf;});
+      file->Close();
+    }
+}
+
+G4bool ArbDistFile::SampleDistribution(double random, Data & result)
+{
+  if (!isValid) return false;
+  Data curr_d = dvec.front(), prev_d = dvec.front();
+  for (size_t idx = 0; idx < dvec.size(); ++idx)
+    {
+      curr_d = dvec[idx];
+      if (idx != 0)
+	{
+	  if (random < curr_d.ncdf && random >= prev_d.ncdf)
+	    {
+	      result = prev_d;
+	      return true;
+	    }
+	}
+      prev_d = curr_d;
+    }
+  return false;
 }
 
 void WCSimPrimaryGeneratorAction::SaveOptionsToOutput(WCSimRootOptions * wcopt)
@@ -374,6 +572,8 @@ G4String WCSimPrimaryGeneratorAction::GetGeneratorTypeString()
     return "gps";
   else if(useLaserEvt)
     return "laser";
+  else if(useArbDistEvt)
+    return "arbdist";
   return "";
 }
 

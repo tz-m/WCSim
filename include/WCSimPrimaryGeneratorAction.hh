@@ -6,6 +6,10 @@
 #include "globals.hh"
 #include "jhfNtuple.h"
 #include <vector>
+#include <random>
+
+#include "TTreeReader.h"
+#include "TFile.h"
 
 #include <fstream>
 
@@ -17,6 +21,7 @@ class G4GeneralParticleSource;
 class G4Event;
 class WCSimPrimaryGeneratorMessenger;
 class G4Generator;
+class ArbDistFile;
 
 class WCSimPrimaryGeneratorAction : public G4VUserPrimaryGeneratorAction
 {
@@ -74,6 +79,7 @@ private:
   G4bool   useGunEvt;
   G4bool   useLaserEvt;  //T. Akiri: Laser flag
   G4bool   useGPSEvt;
+  G4bool   useArbDistEvt;
   std::fstream inputFile;
   G4String vectorFileName;
   G4bool   GenerateVertexInRock;
@@ -95,7 +101,17 @@ private:
   G4double xDir, yDir, zDir;
 
   G4int    _counterRock; 
-  G4int    _counterCublic; 
+  G4int    _counterCublic;
+
+  G4String arbDistFileName;
+  G4double arbDistTimeSmearSigma;
+  G4double arbDistWavelengthSmearSigma;
+  G4ThreeVector arbDistTranslate;
+  G4ThreeVector arbDistRotationAxis;
+  G4double arbDistRotationAngle;
+  G4double arbDistNumPhotons;
+  G4double arbDistNumPhotonsSigma;
+  
 public:
 
   inline void SetMulineEvtGenerator(G4bool choice) { useMulineEvt = choice; }
@@ -111,6 +127,9 @@ public:
   inline void SetGPSEvtGenerator(G4bool choice) { useGPSEvt = choice; }
   inline G4bool IsUsingGPSEvtGenerator()  { return useGPSEvt; }
 
+  inline void SetArbDistEvtGenerator(G4bool choice) { useArbDistEvt = choice; }
+  inline G4bool IsUsingArbDistEvtGenerator() { return useArbDistEvt; }
+  
   inline void OpenVectorFile(G4String fileName) 
   {
     if ( inputFile.is_open() ) 
@@ -126,6 +145,56 @@ public:
   }
   inline G4bool IsGeneratingVertexInRock() { return GenerateVertexInRock; }
   inline void SetGenerateVertexInRock(G4bool choice) { GenerateVertexInRock = choice; }
+
+  inline void SetArbDistFileName(G4String choice) { arbDistFileName = choice; }
+  inline G4String GetArbDistFileName() { return arbDistFileName; }
+
+  inline void SetArbDistTimeSmearSigma(G4double choice) { arbDistTimeSmearSigma = choice; }
+  inline G4double GetArbDistTimeSmearSigma() { return arbDistTimeSmearSigma; }
+
+  inline void SetArbDistWavelengthSmearSigma(G4double choice) { arbDistWavelengthSmearSigma = choice; }
+  inline G4double GetArbDistWavelengthSmearSigma() { return arbDistWavelengthSmearSigma; }
+
+  inline void SetArbDistTranslateXYZ(G4ThreeVector choice) { arbDistTranslate = choice; }
+  inline G4ThreeVector GetArbDistTranslateXYZ() { return arbDistTranslate; }
+
+  inline void SetArbDistRotationAxis(G4ThreeVector choice) { arbDistRotationAxis = choice; }
+  inline G4ThreeVector GetArbDistRotationAxis() { return arbDistRotationAxis; }
+
+  inline void SetArbDistRotationAngle(G4double choice) { arbDistRotationAngle = choice; }
+  inline G4double GetArbDistRotationAngle() { return arbDistRotationAngle; }
+
+  inline void SetArbDistNumPhotons(G4double choice) { arbDistNumPhotons = choice; }
+  inline G4double GetArbDistNumPhotons() { return arbDistNumPhotons; }
+
+  inline void SetArbDistNumPhotonsSigma(G4double choice) { arbDistNumPhotonsSigma = choice; }
+  inline G4double GetArbDistNumPhotonsSigma() { return arbDistNumPhotonsSigma; }
+  
+private:
+  ArbDistFile *ad_file;
+  G4bool arbDistFileRead;
+
+  
+  
+};
+
+class ArbDistFile {
+public:
+  
+  struct Data {
+    unsigned int index;
+    int status, pdg;
+    double xpos, ypos, zpos, xdir, ydir, zdir;
+    double time, energy, ncdf, polang;
+  };
+
+  ArbDistFile(G4String fname);
+  G4bool IsValid() { return isValid; }
+  G4bool SampleDistribution(double random, Data & result);
+  
+private:
+  G4bool isValid;
+  std::vector<Data> dvec;
 
 };
 
