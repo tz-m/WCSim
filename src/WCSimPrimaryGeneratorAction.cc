@@ -399,6 +399,8 @@ void WCSimPrimaryGeneratorAction::GeneratePrimaries(G4Event* anEvent)
       //           --> Rotate the vector (xdir,ydir,zdir) by theta(deg) around the vector (l,m,n).
       //           --> Direction is counterclockwise when looking at the origin from (l,m,n).
       //           --> See https://en.wikipedia.org/wiki/Transformation_matrix#Rotation_2
+      //   -- Mean number of photons to simulate per event
+      //   -- Sigma number of photons to simulate per event
 
       std::cout << "Read parameters:" << std::endl;
       std::cout << "  arbDistFileName=" << arbDistFileName << std::endl;
