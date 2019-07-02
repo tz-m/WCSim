@@ -8,7 +8,7 @@
 #include <vector>
 #include <random>
 
-#include "TTreeReader.h"
+#include "TTree.h"
 #include "TFile.h"
 
 #include <fstream>
@@ -195,7 +195,8 @@ public:
 private:
   G4bool isValid;
   std::vector<Data> dvec;
-
+  size_t dvec_size;
+  
 };
 
 #endif

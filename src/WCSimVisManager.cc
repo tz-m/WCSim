@@ -126,6 +126,7 @@ void WCSimVisManager::RegisterGraphicsSystems () {
   //Configure model
   mymodel->SetDefault("cyan");
   mymodel->Set("gamma","green");
+  mymodel->Set("opticalphoton","green");
   mymodel->Set("nu_e","yellow");
   mymodel->Set("nu_mu","yellow");
   mymodel->Set("anti_nu_e","yellow");

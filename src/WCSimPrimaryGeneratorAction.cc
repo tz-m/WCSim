@@ -506,30 +506,37 @@ ArbDistFile::ArbDistFile(G4String fname)
   if (isValid)
     {
       std::cout << "Open File Fresh" << std::endl;
-      TTreeReader reader("source",file);
-      TTreeReaderValue<unsigned int> r_index(reader,"index");
-      TTreeReaderValue<int> r_status(reader,"status");
-      TTreeReaderValue<int> r_pdg(reader,"pdg");
-      TTreeReaderValue<double> r_xpos(reader,"xpos");
-      TTreeReaderValue<double> r_ypos(reader,"ypos");
-      TTreeReaderValue<double> r_zpos(reader,"zpos");
-      TTreeReaderValue<double> r_xdir(reader,"xdir");
-      TTreeReaderValue<double> r_ydir(reader,"ydir");
-      TTreeReaderValue<double> r_zdir(reader,"zdir");
-      TTreeReaderValue<double> r_time(reader,"time");
-      TTreeReaderValue<double> r_energy(reader,"energy");
-      TTreeReaderValue<double> r_ncdf(reader,"ncdf");
-      TTreeReaderValue<double> r_polang(reader,"polang");
-      while (reader.Next())
+      TTree * sourcetree = (TTree*)file->Get("source");
+      unsigned int r_index;
+      int r_status, r_pdg;
+      double r_xpos, r_ypos, r_zpos;
+      double r_xdir, r_ydir, r_zdir;
+      double r_time, r_energy, r_ncdf, r_polang;
+      sourcetree->SetBranchAddress("index",&r_index);
+      sourcetree->SetBranchAddress("status",&r_status);
+      sourcetree->SetBranchAddress("pdg",&r_pdg);
+      sourcetree->SetBranchAddress("xpos",&r_xpos);
+      sourcetree->SetBranchAddress("ypos",&r_ypos);
+      sourcetree->SetBranchAddress("zpos",&r_zpos);
+      sourcetree->SetBranchAddress("xdir",&r_xdir);
+      sourcetree->SetBranchAddress("ydir",&r_ydir);
+      sourcetree->SetBranchAddress("zdir",&r_zdir);      
+      sourcetree->SetBranchAddress("time",&r_time);
+      sourcetree->SetBranchAddress("energy",&r_energy);
+      sourcetree->SetBranchAddress("ncdf",&r_ncdf);
+      sourcetree->SetBranchAddress("polang",&r_polang);
+      for (Long64_t i=0; i<sourcetree->GetEntries();i++)
 	{
+	  sourcetree->GetEntry(i);
 	  Data d;
-	  d.index = *r_index; d.status = *r_status; d.pdg = *r_pdg;
-	  d.xpos = *r_xpos; d.ypos = *r_ypos; d.zpos = *r_zpos;
-	  d.xdir = *r_xdir; d.ydir = *r_ydir; d.zdir = *r_zdir;
-	  d.time = *r_time; d.energy = *r_energy; d.ncdf = *r_ncdf;
-	  d.polang = *r_polang;
+	  d.index = r_index; d.status = r_status; d.pdg = r_pdg;
+	  d.xpos = r_xpos; d.ypos = r_ypos; d.zpos = r_zpos;
+	  d.xdir = r_xdir; d.ydir = r_ydir; d.zdir = r_zdir;
+	  d.time = r_time; d.energy = r_energy; d.ncdf = r_ncdf;
+	  d.polang = r_polang;
 	  dvec.push_back(d);
 	}
+      dvec_size = dvec.size();
       std::sort(dvec.begin(),dvec.end(),[](const Data &d1, const Data &d2) {return d1.ncdf<d2.ncdf;});
       file->Close();
     }
@@ -538,20 +545,23 @@ ArbDistFile::ArbDistFile(G4String fname)
 G4bool ArbDistFile::SampleDistribution(double random, Data & result)
 {
   if (!isValid) return false;
-  Data curr_d = dvec.front(), prev_d = dvec.front();
-  for (size_t idx = 0; idx < dvec.size(); ++idx)
+
+  // Binary search algorithm.
+  size_t min = 0, max = dvec_size-1;
+  if (dvec[min].ncdf <= random && dvec[max].ncdf > random)
     {
-      curr_d = dvec[idx];
-      if (idx != 0)
+      while (max-min != 1)
 	{
-	  if (random < curr_d.ncdf && random >= prev_d.ncdf)
-	    {
-	      result = prev_d;
-	      return true;
-	    }
+	  size_t mid = (min+max)/2;
+	  if (dvec[mid].ncdf < random)
+	    min = mid;
+	  else
+	    max = mid;
 	}
-      prev_d = curr_d;
+      result = dvec[min];
+      return true;
     }
+  
   return false;
 }
 
